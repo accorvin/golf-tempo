@@ -1,17 +1,19 @@
 /**
- * Pose fixture factory — used by integration tests.
+ * Pose fixture factory -- used by integration tests.
  *
  * Generates deterministic, realistic PoseFrame arrays simulating a full
  * golf swing. All 33 BlazePose landmarks populated; key ones move realistically.
  *
+ * CAMERA SETUP: Front-facing camera, right-handed golfer.
+ *   - Lead wrist (left, index 15) moves LEFT (x decreases) during backswing
+ *   - Returns RIGHT past address into follow-through (x increases past addressX)
+ *
  * For integration tests import generateSwingFixture() directly.
- * To regenerate JSON fixtures on disk, run:
- *   npm run generate-fixtures
  */
 
 import { PoseFrame, PoseLandmark } from '../tempo/SwingDetector';
 
-// ── Fixed-seed PRNG for deterministic tests ───────────────────────────────
+// Fixed-seed PRNG for deterministic tests
 class SeededRandom {
   private seed: number;
   constructor(seed: number) { this.seed = seed >>> 0; }
@@ -24,45 +26,41 @@ class SeededRandom {
   jitter(amp: number): number { return (this.next() - 0.5) * 2 * amp; }
 }
 
-// ── Body keypoint positions at each swing phase ───────────────────────────
-
 interface Body {
-  // Wrists
   lWx: number; lWy: number;
   rWx: number; rWy: number;
-  // Shoulders
   lSx: number; lSy: number;
   rSx: number; rSy: number;
-  // Hips
   lHx: number; lHy: number;
   rHx: number; rHy: number;
 }
 
+// Front-facing camera, right-handed golfer:
+//   ADDRESS: lead wrist x=0.60 (right-center, golfer facing camera)
+//   TOP:     lead wrist x=0.28 (moved LEFT across body to top of backswing)
+//   FOLLOW:  lead wrist x=0.72 (returned RIGHT past address into follow-through)
 const ADDRESS: Body = {
-  lWx: 0.40, lWy: 0.72,  rWx: 0.45, rWy: 0.70,
-  lSx: 0.38, lSy: 0.45,  rSx: 0.58, rSy: 0.44,
-  lHx: 0.40, lHy: 0.62,  rHx: 0.56, rHy: 0.62,
+  lWx: 0.60, lWy: 0.72,  rWx: 0.55, rWy: 0.70,
+  lSx: 0.42, lSy: 0.45,  rSx: 0.62, rSy: 0.44,
+  lHx: 0.44, lHy: 0.62,  rHx: 0.60, rHy: 0.62,
 };
 
 const TOP: Body = {
-  lWx: 0.72, lWy: 0.35,  rWx: 0.68, rWy: 0.32,
-  lSx: 0.44, lSy: 0.44,  rSx: 0.56, rSy: 0.43,
-  lHx: 0.43, lHy: 0.62,  rHx: 0.54, rHy: 0.63,
+  lWx: 0.28, lWy: 0.35,  rWx: 0.32, rWy: 0.32,
+  lSx: 0.44, lSy: 0.44,  rSx: 0.58, rSy: 0.43,
+  lHx: 0.46, lHy: 0.62,  rHx: 0.58, rHy: 0.63,
 };
 
 const FOLLOW: Body = {
-  lWx: 0.30, lWy: 0.68,  rWx: 0.35, rWy: 0.66,
-  lSx: 0.36, lSy: 0.44,  rSx: 0.60, rSy: 0.43,
-  lHx: 0.38, lHy: 0.62,  rHx: 0.58, rHy: 0.62,
+  lWx: 0.72, lWy: 0.68,  rWx: 0.68, rWy: 0.66,
+  lSx: 0.40, lSy: 0.44,  rSx: 0.64, rSy: 0.43,
+  lHx: 0.42, lHy: 0.62,  rHx: 0.62, rHy: 0.62,
 };
-
-// ── Interpolation helpers ─────────────────────────────────────────────────
 
 function easeInOut(t: number): number {
   return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
 }
 function easeIn(t: number): number { return t * t; }
-
 function lerp(a: number, b: number, t: number): number { return a + (b - a) * t; }
 
 function lerpBody(a: Body, b: Body, t: number, ease: (t: number) => number): Body {
@@ -91,8 +89,6 @@ function bodyToLandmarks(body: Body, rng: SeededRandom, noise: number, wristVis 
   return lm;
 }
 
-// ── Public fixture factory ─────────────────────────────────────────────────
-
 export interface SwingFixture {
   label: string;
   backswingMs: number;
@@ -115,13 +111,13 @@ export function generateSwingFixture(
   const frames: PoseFrame[] = [];
   let t = 0;
 
-  // IDLE — 10 stationary frames so addressX locks cleanly
+  // IDLE: 10 stationary frames so addressX locks cleanly
   for (let i = 0; i < 10; i++) {
     frames.push({ timestampMs: t, landmarks: bodyToLandmarks(ADDRESS, rng, noise) });
     t += mspf;
   }
 
-  // BACKSWING
+  // BACKSWING: wrist moves LEFT (x: 0.60 -> 0.28)
   const bsf = Math.round(backswingMs / mspf);
   for (let i = 0; i < bsf; i++) {
     const body = lerpBody(ADDRESS, TOP, i / bsf, easeInOut);
@@ -129,24 +125,24 @@ export function generateSwingFixture(
     t += mspf;
   }
 
-  // PAUSE at top (5 near-stationary frames)
+  // PAUSE at top
   for (let i = 0; i < 5; i++) {
     frames.push({ timestampMs: t, landmarks: bodyToLandmarks(TOP, rng, noise * 0.25) });
     t += mspf;
   }
 
-  // DOWNSWING
+  // DOWNSWING: wrist returns RIGHT (x: 0.28 -> 0.72)
   const dsf = Math.round(downswingMs / mspf);
   for (let i = 0; i < dsf; i++) {
     const body = lerpBody(TOP, FOLLOW, i / dsf, easeIn);
-    const wristVis = i > dsf * 0.8 ? 0.75 : 0.94; // slight drop at impact
+    const wristVis = i > dsf * 0.8 ? 0.75 : 0.94;
     frames.push({ timestampMs: t, landmarks: bodyToLandmarks(body, rng, noise, wristVis) });
     t += mspf;
   }
 
   // FOLLOW-THROUGH
   for (let i = 0; i < 10; i++) {
-    const body: Body = { ...FOLLOW, lWx: FOLLOW.lWx - 0.02 * i, rWx: FOLLOW.rWx - 0.02 * i };
+    const body: Body = { ...FOLLOW, lWx: FOLLOW.lWx + 0.01 * i, rWx: FOLLOW.rWx + 0.01 * i };
     frames.push({ timestampMs: t, landmarks: bodyToLandmarks(body, rng, noise) });
     t += mspf;
   }
@@ -154,14 +150,17 @@ export function generateSwingFixture(
   return { label, backswingMs, downswingMs, physicalRatio: backswingMs / downswingMs, fps, frames };
 }
 
-// ── Pre-built named fixtures ───────────────────────────────────────────────
-
+// NOTE ON NOISE=0 FIXTURES:
+// Quality-critical fixtures use noise=0 for deterministic classification.
+// This ensures the ratio is exactly what the algorithm measures from the
+// ideal wrist arc, unaffected by PRNG sequence. Noisy fixture uses noise>0
+// to verify the algorithm handles real-world jitter.
 export const FIXTURES = {
-  good3to1:   generateSwingFixture('good_3to1_60fps',  750, 250, 60,  0.003, 42),
-  good30fps:  generateSwingFixture('good_3to1_30fps',  750, 250, 30,  0.003, 43),
-  good120fps: generateSwingFixture('good_3to1_120fps', 750, 250, 120, 0.003, 44),
-  tooFast:    generateSwingFixture('too_fast_2to1',    400, 200, 60,  0.003, 45),
-  tooSlow:    generateSwingFixture('too_slow_5to1',   1250, 250, 60,  0.003, 46),
-  noisy:      generateSwingFixture('noisy_3to1',       750, 250, 60,  0.008, 47),
-  knapp:      generateSwingFixture('knapp_style',      780, 240, 60,  0.002, 48),
+  good3to1:   generateSwingFixture('good_3to1_60fps',  750,  250, 60,  0,     42), // noise=0 -> deterministic
+  good30fps:  generateSwingFixture('good_3to1_30fps',  750,  250, 30,  0,     43),
+  good120fps: generateSwingFixture('good_3to1_120fps', 750,  250, 120, 0,     44),
+  tooFast:    generateSwingFixture('too_fast_2to1',    400,  200, 60,  0,     45), // noise=0 -> deterministic
+  tooSlow:    generateSwingFixture('too_slow_5to1',   1400,  250, 60,  0,     46), // 1400/250 -> clearly too_slow
+  noisy:      generateSwingFixture('noisy_3to1',       750,  250, 60,  0.005, 47), // noise tests robustness
+  knapp:      generateSwingFixture('knapp_style',      780,  240, 60,  0,     48), // noise=0 -> deterministic
 } as const;

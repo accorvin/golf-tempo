@@ -44,7 +44,19 @@ export interface SwingResult {
 }
 
 // ── Landmark indices ───────────────────────────────────────────────────────
-const LEAD_WRIST = 15; // left wrist = lead wrist for right-handed golfer (front view)
+/**
+ * CAMERA ORIENTATION NOTE:
+ * Front-facing camera (golfer faces camera, right-handed):
+ *   - Lead wrist (LEFT wrist, index 15) moves LEFT (x decreases) during backswing
+ *   - Use SWING_DIRECTION = -1
+ * Down-the-line camera (camera behind golfer):
+ *   - Lead wrist moves RIGHT (x increases) during backswing
+ *   - Use SWING_DIRECTION = +1
+ *
+ * Default: front-facing camera (SWING_DIRECTION = -1)
+ */
+const LEAD_WRIST = 15; // left wrist = lead wrist for right-handed golfer
+const SWING_DIRECTION = -1; // -1 = front camera (backswing goes left), +1 = down-the-line
 
 // ── Smoothing ──────────────────────────────────────────────────────────────
 const SMOOTH_WINDOW = 3;       // 3-frame rolling average
@@ -71,10 +83,14 @@ const DOWNSWING_START_DISPLACEMENT = 0.03;
 const IMPACT_PAST_ADDRESS = 0.03;
 
 // ── Quality classification (measured ratios, calibrated for this algorithm) ──
-const GOOD_LOW  = 2.0;   // measured ratios typically 10–15% lower than physical
-const GOOD_HIGH = 3.5;
-const TOO_FAST_THRESHOLD = 1.8;
-const TOO_SLOW_THRESHOLD = 4.0;
+// Due to detection timing, measured ratios run ~25% lower than physical ratios:
+//   Physical 3:1 (750/250) measures as ~2.2:1
+//   Physical 2:1 (400/200) measures as ~1.5:1
+//   Physical 5:1 (1250/250) measures as ~3.7:1
+const GOOD_LOW  = 1.9;   // ~physical 2.5:1
+const GOOD_HIGH = 3.2;   // ~physical 4.3:1
+const TOO_FAST_THRESHOLD = 1.6;  // below this = too fast
+const TOO_SLOW_THRESHOLD = 3.3;  // above this = too slow
 
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -177,8 +193,11 @@ export class SwingDetector {
       }
     }
 
-    // Trigger backswing when wrist moves right beyond address + small threshold
-    if (pt.x > this.addressX + SWING_START_DISPLACEMENT) {
+    // Trigger backswing: wrist moves in backswing direction past threshold
+    // Front camera (SWING_DIRECTION=-1): wrist moves left (x decreases)
+    // Down-the-line (SWING_DIRECTION=+1): wrist moves right (x increases)
+    const displaced = SWING_DIRECTION * (pt.x - this.addressX);
+    if (displaced > SWING_START_DISPLACEMENT) {
       this.phase = 'BACKSWING';
       this.backswingStartMs = pt.timestampMs;
       this.peakX = pt.x;
@@ -187,21 +206,28 @@ export class SwingDetector {
   }
 
   private updateBackswing(pt: SmoothedPoint): void {
-    // Track the rightmost point (top of swing)
-    if (pt.x > this.peakX) {
+    // Track the extreme point in the backswing direction (top of swing)
+    // Front camera: peak = lowest x value seen
+    // Down-the-line: peak = highest x value seen
+    const furtherIntoBackswing = SWING_DIRECTION * (pt.x - this.peakX);
+    if (furtherIntoBackswing > 0) {
       this.peakX = pt.x;
       this.peakTimestampMs = pt.timestampMs;
     }
 
-    // Detect downswing: wrist has moved left of peak by enough to be deliberate
-    if (pt.x < this.peakX - DOWNSWING_START_DISPLACEMENT) {
+    // Detect downswing: wrist has reversed back toward ball
+    const reversedFromPeak = SWING_DIRECTION * (this.peakX - pt.x);
+    if (reversedFromPeak > DOWNSWING_START_DISPLACEMENT) {
       this.phase = 'DOWNSWING';
     }
   }
 
   private updateDownswing(pt: SmoothedPoint): void {
     // Impact / follow-through: wrist passes back through address and beyond
-    if (pt.x <= this.addressX - IMPACT_PAST_ADDRESS) {
+    // Front camera: wrist returns right (x increases past addressX + threshold)
+    // Down-the-line: wrist returns left (x decreases past addressX - threshold)
+    const pastAddress = SWING_DIRECTION * (this.addressX - pt.x);
+    if (pastAddress > IMPACT_PAST_ADDRESS) {
       this.impactTimestampMs = pt.timestampMs;
       this.phase = 'COMPLETE';
       this.finalize();

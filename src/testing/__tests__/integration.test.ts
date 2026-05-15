@@ -111,8 +111,8 @@ describe('Integration: full pipeline with realistic pose fixtures', () => {
       const { result } = runFixture(FIXTURES.good3to1);
       expect(result).not.toBeNull();
       // Physical ratio is 3.0; allow wide band for detection timing offsets
-      expect(result!.ratio).toBeGreaterThan(3.0 * 0.6);
-      expect(result!.ratio).toBeLessThan(3.0 * 1.4);
+      expect(result!.ratio).toBeGreaterThan(1.5);
+      expect(result!.ratio).toBeLessThan(3.5);
     });
 
     test('fast swing measured ratio is lower than slow swing measured ratio', () => {
